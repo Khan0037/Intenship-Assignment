@@ -1,0 +1,29 @@
+import argparse
+from pubmed_tools import fetch_pubmed_ids, fetch_pubmed_details, parse_paper_details, save_to_csv
+
+def main():
+    parser = argparse.ArgumentParser(description="Fetch research papers from PubMed based on a query.")
+    parser.add_argument('query', type=str, help="Search query for PubMed.")
+    parser.add_argument('-d', '--debug', action='store_true', help="Print debug information during execution.")
+    parser.add_argument('-f', '--file', type=str, help="Filename to save the results as a CSV file.")
+
+    args = parser.parse_args()
+
+    pubmed_ids = fetch_pubmed_ids(args.query, args.debug)
+    if not pubmed_ids:
+        print("No papers found for the given query.")
+        return
+
+    xml_data = fetch_pubmed_details(pubmed_ids, args.debug)
+    papers = parse_paper_details(xml_data)
+
+    if args.file:
+        save_to_csv(papers, args.file)
+        print(f"Results saved to {args.file}")
+    else:
+        print("Results:")
+        for paper in papers:
+            print(paper)
+
+if __name__ == "__main__":
+    main()
