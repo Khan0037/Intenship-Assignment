@@ -1,0 +1,107 @@
+import requests
+import csv
+import re
+import argparse
+from bs4 import BeautifulSoup
+
+# PubMed API Base URLs
+ESUMMARY_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+EFETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+
+# Function to fetch paper IDs from PubMed based on a query
+def fetch_pubmed_ids(query, debug):
+    params = {
+        'db': 'pubmed',
+        'term': query,
+        'retmax': 100,  # Maximum number of results to fetch
+        'retmode': 'json'
+    }
+    response = requests.get(ESUMMARY_URL, params=params)
+    if debug:
+        print(f"PubMed ID Fetch Response: {response.text}")
+    response.raise_for_status()
+    data = response.json()
+    return data.get('esearchresult', {}).get('idlist', [])
+
+# Function to fetch detailed paper data using PubMed IDs
+def fetch_pubmed_details(pubmed_ids, debug):
+    params = {
+        'db': 'pubmed',
+        'id': ','.join(pubmed_ids),
+        'retmode': 'xml'
+    }
+    response = requests.get(EFETCH_URL, params=params)
+    if debug:
+        print(f"PubMed Details Fetch Response: {response.text}")
+    response.raise_for_status()
+    return BeautifulSoup(response.content, 'xml')
+
+# Function to parse paper details and filter data
+def parse_paper_details(xml_data):
+    papers = []
+    for article in xml_data.find_all('PubmedArticle'):
+        pubmed_id = article.find('PMID').text if article.find('PMID') else 'N/A'
+        title = article.find('ArticleTitle').text if article.find('ArticleTitle') else 'N/A'
+        pub_date = article.find('PubDate').text if article.find('PubDate') else 'N/A'
+
+        authors = article.find_all('Author')
+        non_academic_authors = []
+        company_affiliations = []
+        corresponding_author_email = 'N/A'
+
+        for author in authors:
+            affiliation = author.find('AffiliationInfo').find('Affiliation').text if author.find('AffiliationInfo') else ''
+            if re.search(r'(Inc\.|Ltd\.|Pharmaceutical|Biotech)', affiliation, re.IGNORECASE):
+                non_academic_authors.append(
+                    f"{author.find('ForeName').text} {author.find('LastName').text}" if author.find('ForeName') and author.find('LastName') else 'Unknown'
+                )
+                company_affiliations.append(affiliation)
+            if re.search(r'@', affiliation):
+                corresponding_author_email = affiliation
+
+        papers.append({
+            'PubmedID': pubmed_id,
+            'Title': title,
+            'Publication Date': pub_date,
+            'Non-academic Author(s)': '; '.join(non_academic_authors),
+            'Company Affiliation(s)': '; '.join(company_affiliations),
+            'Corresponding Author Email': corresponding_author_email
+        })
+
+    return papers
+
+# Function to save results to a CSV file
+def save_to_csv(papers, filename):
+    fieldnames = ['PubmedID', 'Title', 'Publication Date', 'Non-academic Author(s)', 'Company Affiliation(s)', 'Corresponding Author Email']
+    with open(filename, mode='w', newline='', encoding='utf-8') as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(papers)
+
+# Main function to handle command-line arguments and execute the program
+def main():
+    parser = argparse.ArgumentParser(description="Fetch research papers from PubMed based on a query.")
+    parser.add_argument('query', type=str, help="Search query for PubMed.")
+    parser.add_argument('-d', '--debug', action='store_true', help="Print debug information during execution.")
+    parser.add_argument('-f', '--file', type=str, help="Filename to save the results as a CSV file.")
+
+    args = parser.parse_args()
+
+    pubmed_ids = fetch_pubmed_ids(args.query, args.debug)
+    if not pubmed_ids:
+        print("No papers found for the given query.")
+        return
+
+    xml_data = fetch_pubmed_details(pubmed_ids, args.debug)
+    papers = parse_paper_details(xml_data)
+
+    if args.file:
+        save_to_csv(papers, args.file)
+        print(f"Results saved to {args.file}")
+    else:
+        print("Results:")
+        for paper in papers:
+            print(paper)
+
+if __name__ == "__main__":
+    main()
